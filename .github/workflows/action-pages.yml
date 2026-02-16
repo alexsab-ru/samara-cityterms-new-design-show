@@ -107,7 +107,7 @@ jobs:
           npm install
           # Для npm-скриптов используем "npm run build". Аргументы скрипту передаём после "--".
           # В результате собираем статический сайт в ./_site для дальнейшего upload-pages-artifact.
-          npm run build -- --outDir ../_site
+          VITE_BASE_PATH=/samara-cityterms-new-design-show/ npm run build -- --outDir ../_site
 
       - name: Upload artifact
         # Automatically uploads an artifact from the './_site' directory by default
