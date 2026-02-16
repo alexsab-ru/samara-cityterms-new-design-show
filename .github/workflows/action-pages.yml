@@ -86,6 +86,7 @@ jobs:
           # Берём исходники из приватного репозитория для сборки.
           # Формат vars.SOURCE: owner/repository
           repository: ${{ vars.SOURCE }}
+          ref: main
           token: ${{ secrets.FINE_GRAINED_PAT }}
           path: source_repo
           fetch-depth: 1
