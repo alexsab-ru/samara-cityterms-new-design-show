@@ -1,0 +1,145 @@
+# This workflow uses actions that are not certified by GitHub.
+# They are provided by a third-party and are governed by
+# separate terms of service, privacy policy, and support
+# documentation.
+
+# Sample workflow for building and deploying a Astro site to GitHub Pages
+name: Deploy website to Pages
+
+on:
+  # Runs on pushes targeting the default branch
+  push:
+    branches: ["main"]
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+  # Allows this workflow to be called by other workflows
+  workflow_call:
+
+# Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Allow only one concurrent deployment, skipping runs queued between the run in-progress and latest queued.
+# However, do NOT cancel in-progress runs as we want to allow these production deployments to complete.
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  check-pages:
+    runs-on: ubuntu-latest
+    outputs:
+      pages_enabled: ${{ steps.check-pages.outputs.pages_enabled }}
+    steps:
+      - name: Check GitHub Pages status
+        id: check-pages
+        run: |
+          PAGES_STATUS=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${{ github.repository }}/pages" \
+            -w '%{http_code}' -o /dev/null)
+          if [ "$PAGES_STATUS" = "200" ]; then
+            echo "pages_enabled=true" >> $GITHUB_OUTPUT
+          else
+            echo "pages_enabled=false" >> $GITHUB_OUTPUT
+          fi
+
+  determine_env:
+    needs: check-pages
+    runs-on: ubuntu-latest
+    outputs:
+      env_name: ${{ steps.set_env.outputs.env_name }}
+    steps:
+      - id: set_env
+        run: |
+          PROD_BRANCHES=("main" "master" "brand" "dealer") # Bash array
+          CURRENT_BRANCH="${{ github.ref_name }}"
+          IS_PROD=false
+          for branch in "${PROD_BRANCHES[@]}"; do
+            if [[ "$CURRENT_BRANCH" == "$branch" ]]; then
+              IS_PROD=true
+              break
+            fi
+          done
+          if $IS_PROD; then
+            echo "env_name=production" >> $GITHUB_OUTPUT
+          else
+            echo "env_name=development" >> $GITHUB_OUTPUT
+          fi
+
+  # Build job
+  build:
+    needs: [check-pages, determine_env]
+    if: needs.check-pages.outputs.pages_enabled == 'true'
+    concurrency: ci-${{ github.ref }}
+    runs-on: ubuntu-latest
+
+    # Указываете окружение и его переменные
+    environment:
+      name: ${{ needs.determine_env.outputs.env_name }}
+
+    steps:
+      - name: Clone private source repository
+        run: |
+          # Клонируем приватный репозиторий-источник через PAT.
+          # Слэш в конце SOURCE удаляем, чтобы URL всегда был валидным.
+          SOURCE_URL=$(echo ${{ vars.SOURCE }} | sed 's/\/$//')
+          git clone https://x-access-token:${{ secrets.FINE_GRAINED_PAT }}@github.com/$SOURCE_URL.git source_repo
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Setup Pages
+        id: pages
+        uses: actions/configure-pages@v4
+
+      - name: Astro Build
+        run: |
+          # Собираем проект из клонированного приватного репозитория.
+          cd source_repo
+          npm install
+          # Для npm-скриптов используем "npm run build". Аргументы скрипту передаём после "--".
+          # В результате собираем статический сайт в ./_site для дальнейшего upload-pages-artifact.
+          npm run build -- --outDir ../_site
+
+      - name: Upload artifact
+        # Automatically uploads an artifact from the './_site' directory by default
+        uses: actions/upload-pages-artifact@v3
+
+  # Deployment job
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    outputs:
+      # Передаём фактический URL Pages в следующие job через output.
+      # Этот URL возвращает шаг deploy-pages после успешного деплоя.
+      page_url: ${{ steps.deployment.outputs.page_url }}
+      after_deploy: ${{ steps.after_deploy.outputs.text }}
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+      - name: Create After_deploy text
+        id: after_deploy
+        run: |
+          # Берём реальный URL из deploy-pages, чтобы в уведомлении всегда был актуальный адрес.
+          echo text="<blockquote>After deploy: ${{ steps.deployment.outputs.page_url }}</blockquote>" >> $GITHUB_OUTPUT
+
+  notify_telegram_after_deploy:
+    needs: [build, deploy]
+    if: needs.deploy.result == 'success'
+    uses: ./.github/workflows/github-telegram.yml
+    with:
+      caller-id: 'after-deploy'
+      additional-text: |
+        $(echo -n '${{ needs.deploy.outputs.after_deploy }}' | base64)
+    secrets:
+      TELEGRAM_TO: ${{ secrets.TELEGRAM_TO_AFTER_DEPLOY }}
+      TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
