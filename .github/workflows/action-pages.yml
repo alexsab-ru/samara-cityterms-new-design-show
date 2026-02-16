@@ -80,12 +80,15 @@ jobs:
       name: ${{ needs.determine_env.outputs.env_name }}
 
     steps:
-      - name: Clone private source repository
-        run: |
-          # Клонируем приватный репозиторий-источник через PAT.
-          # Слэш в конце SOURCE удаляем, чтобы URL всегда был валидным.
-          SOURCE_URL=$(echo ${{ vars.SOURCE }} | sed 's/\/$//')
-          git clone https://x-access-token:${{ secrets.FINE_GRAINED_PAT }}@github.com/$SOURCE_URL.git source_repo
+      - name: Checkout private source repository
+        uses: actions/checkout@v4
+        with:
+          # Берём исходники из приватного репозитория для сборки.
+          # Формат vars.SOURCE: owner/repository
+          repository: ${{ vars.SOURCE }}
+          token: ${{ secrets.FINE_GRAINED_PAT }}
+          path: source_repo
+          fetch-depth: 1
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
